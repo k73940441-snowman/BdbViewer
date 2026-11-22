@@ -254,29 +254,209 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun loadChaptersFromTable(tableName: String, bookNum: Int, textCol: String) {
-    val database = db ?: return
-    chapterNumbers.clear()
-    val displayChapters = mutableListOf<String>()
+       private fun loadVersesFromTable(tableName: String, bookNum: Int, chapterNum: Int, textCol: String) {
+        val database = db ?: return
+        val cursor = database.rawQuery(
+            "SELECT * FROM [$tableName] WHERE book = $bookNum AND chapter = $chapterNum",
+            null
+        )
+        val colNames = cursor.columnNames
+        val verseIdx = colNames.indexOfFirst { it.equals("verse", ignoreCase = true) || it.equals("fromverse", ignoreCase = true) }
+        val toVerseIdx = colNames.indexOfFirst { it.equals("toverse", ignoreCase = true) }
+        val textIdx = colNames.indexOfFirst { it.equals(textCol, ignoreCase = true) }
 
-    // 1. 해당 책(bookNum)의 장 번호를 중복 없이 오름차순으로 조회
-    val query = "SELECT DISTINCT chapter FROM $tableName WHERE book = ? ORDER BY chapter ASC"
-    val cursor = database.rawQuery(query, arrayOf(bookNum.toString()))
+        val builder = SpannableStringBuilder()
+        val title = "${getBookDisplayName(bookNum)} ${chapterNum}장\n\n"
+        builder.append(title)
+        builder.setSpan(StyleSpan(Typeface.BOLD), 0, title.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
 
-    cursor.use {
-        val chapterColIndex = it.getColumnIndex("chapter")
-        if (chapterColIndex != -1) {
-            while (it.moveToNext()) {
-                val chapterNum = it.getInt(chapterColIndex)
-                chapterNumbers.add(chapterNum)
-                displayChapters.add("${chapterNum}장") // 화면에 표시할 텍스트 (예: "1장")
+        while (cursor.moveToNext()) {
+            val verseLabel = if (verseIdx >= 0) {
+                val v1 = cursor.getInt(verseIdx)
+                val v2 = if (toVerseIdx >= 0) cursor.getInt(toVerseIdx) else v1
+                if (v2 > v1) "$v1-$v2 절  " else "$v1  "
+            } else {
+                "• "
+            }
+
+            val contentText = if (textIdx >= 0) (cursor.getString(textIdx) ?: "") else ""
+
+            val start = builder.length
+            builder.append(verseLabel)
+            builder.setSpan(ForegroundColorSpan(Color.parseColor("#1565C0")), start, start + verseLabel.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            builder.setSpan(StyleSpan(Typeface.BOLD), start, start + verseLabel.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+
+            builder.append("$contentText\n\n")
+        }
+        cursor.close()
+
+        tvBibleContent.text = builder
+        scrollView.scrollTo(0, 0)
+    }
+
+    private fun loadGeneralTables(tables: List<String>) {
+        tableNames.clear()
+        tableNames.addAll(tables)
+
+        val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, tableNames)
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        spinnerBook.adapter = adapter
+
+        spinnerBook.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                activeTableName = tableNames[position]
+                loadGeneralTableData(activeTableName)
+            }
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+    }
+
+    private fun loadGeneralTableData(tableName: String) {
+        val database = db ?: return
+        val cursor = database.rawQuery("SELECT * FROM [$tableName] LIMIT 300", null)
+        val colNames = cursor.columnNames
+        if (colNames.isNotEmpty()) {
+            textColumnName = colNames.last()
+        }
+
+        val builder = SpannableStringBuilder()
+        val header = "📂 테이블: $tableName (최대 300개 항목 표시)\n\n"
+        builder.append(header)
+        builder.setSpan(StyleSpan(Typeface.BOLD), 0, header.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+
+        var idx = 0
+        while (cursor.moveToNext()) {
+            idx++
+            val titleStart = builder.length
+            val itemHeader = "[$idx]\n"
+            builder.append(itemHeader)
+            builder.setSpan(ForegroundColorSpan(Color.parseColor("#2E7D32")), titleStart, titleStart + itemHeader.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            builder.setSpan(StyleSpan(Typeface.BOLD), titleStart, titleStart + itemHeader.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+
+            val rowTexts = mutableListOf("").apply { clear() }
+            for (i in colNames.indices) {
+                val value = cursor.getString(i) ?: ""
+                if (value.isNotBlank()) {
+                    rowTexts.add("• ${colNames[i]}: $value")
+                }
+            }
+            builder.append(rowTexts.joinToString("\n") + "\n\n────────────────────\n\n")
+        }
+        cursor.close()
+
+        tvBibleContent.text = builder
+        scrollView.scrollTo(0, 0)
+    }
+
+    private fun moveChapter(delta: Int) {
+        if (currentMode == DbMode.GENERAL) {
+            Toast.makeText(this, "찬송가/사전 모드에서는 상단 메뉴에서 항목을 선택하세요.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (chapterNumbers.isEmpty()) return
+        val currentChIdx = spinnerChapter.selectedItemPosition
+        val nextChIdx = currentChIdx + delta
+
+        if (nextChIdx in chapterNumbers.indices) {
+            spinnerChapter.setSelection(nextChIdx)
+        } else if (delta > 0 && spinnerBook.selectedItemPosition + 1 < bookNumbers.size) {
+            spinnerBook.setSelection(spinnerBook.selectedItemPosition + 1)
+        } else if (delta < 0 && spinnerBook.selectedItemPosition - 1 >= 0) {
+            spinnerBook.setSelection(spinnerBook.selectedItemPosition - 1)
+        } else {
+            Toast.makeText(this, "더 이상 이동할 장이 없습니다.", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun performSearch() {
+        val database = db
+        if (database == null) {
+            Toast.makeText(this, "먼저 DB 파일을 불러와주세요.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val keyword = etSearch.text.toString().trim()
+        if (keyword.isEmpty()) {
+            Toast.makeText(this, "검색어를 입력하세요.", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        tvStatus.text = "'$keyword' 검색 중..."
+        lifecycleScope.launch(Dispatchers.IO) {
+            val builder = SpannableStringBuilder()
+            var count = 0
+            val safeKeyword = keyword.replace("'", "''")
+
+            if (currentMode == DbMode.BIBLE || currentMode == DbMode.COMMENTARY) {
+                val targetCol = if (currentMode == DbMode.BIBLE) "btext" else textColumnName
+                val cursor = database.rawQuery(
+                    "SELECT * FROM [$activeTableName] WHERE [$targetCol] LIKE '%$safeKeyword%' ORDER BY book ASC, chapter ASC LIMIT 200",
+                    null
+                )
+                val colNames = cursor.columnNames
+                val bookIdx = colNames.indexOfFirst { it.equals("book", ignoreCase = true) }
+                val chIdx = colNames.indexOfFirst { it.equals("chapter", ignoreCase = true) }
+                val vIdx = colNames.indexOfFirst { it.equals("verse", ignoreCase = true) || it.equals("fromverse", ignoreCase = true) }
+                val txtIdx = colNames.indexOfFirst { it.equals(targetCol, ignoreCase = true) }
+
+                while (cursor.moveToNext()) {
+                    count++
+                    val b = if (bookIdx >= 0) cursor.getInt(bookIdx) else 0
+                    val c = if (chIdx >= 0) cursor.getInt(chIdx) else 0
+                    val v = if (vIdx >= 0) cursor.getInt(vIdx) else 0
+                    val text = if (txtIdx >= 0) (cursor.getString(txtIdx) ?: "") else ""
+
+                    val bookShortName = if (b in 1 until bibleBookNames.size) bibleBookNames[b] else "${b}권"
+                    val ref = if (v > 0) "[$bookShortName $c:$v] " else "[$bookShortName ${c}장] "
+                    val start = builder.length
+                    builder.append(ref)
+                    builder.setSpan(ForegroundColorSpan(Color.parseColor("#2E7D32")), start, start + ref.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    builder.setSpan(StyleSpan(Typeface.BOLD), start, start + ref.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    builder.append("$text\n\n")
+                }
+                cursor.close()
+            } else if (activeTableName.isNotEmpty() && textColumnName.isNotEmpty()) {
+                val colCursor = database.rawQuery("PRAGMA table_info([$activeTableName])", null)
+                val allCols = mutableListOf("").apply { clear() }
+                while (colCursor.moveToNext()) {
+                    allCols.add(colCursor.getString(1))
+                }
+                colCursor.close()
+
+                val whereClause = allCols.joinToString(" OR ") { "[$it] LIKE '%$safeKeyword%'" }
+
+                val cursor = database.rawQuery(
+                    "SELECT * FROM [$activeTableName] WHERE $whereClause LIMIT 200",
+                    null
+                )
+                val colNames = cursor.columnNames
+                while (cursor.moveToNext()) {
+                    count++
+                    val rowTexts = mutableListOf("").apply { clear() }
+                    for (i in colNames.indices) {
+                        val value = cursor.getString(i) ?: ""
+                        if (value.isNotBlank()) {
+                            rowTexts.add("• ${colNames[i]}: $value")
+                        }
+                    }
+                    builder.append("[$count]\n" + rowTexts.joinToString("\n") + "\n\n────────────────────\n\n")
+                }
+                cursor.close()
+            }
+
+            withContext(Dispatchers.Main) {
+                tvStatus.text = "검색 결과: ${count}건" + if (count >= 200) " (최대 200건 표시)" else ""
+                if (count == 0) {
+                    tvBibleContent.text = "'$keyword'에 대한 검색 결과가 없습니다."
+                } else {
+                    tvBibleContent.text = builder
+                    scrollView.scrollTo(0, 0)
+                }
             }
         }
     }
 
-    // 2. 추출한 displayChapters를 UI(Spinner, RecyclerView 등)에 반영하는 로직
-    // 예시 (Spinner 사용 시):
-    // val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, displayChapters)
-    // adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-    // chapterSpinner.adapter = adapter
+    override fun onDestroy() {
+        super.onDestroy()
+        db?.close()
+    }
 }
