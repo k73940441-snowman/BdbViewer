@@ -267,11 +267,11 @@ class MainActivity : AppCompatActivity() {
 
                 builder.append(ref)
                 builder.setSpan(
-    StyleSpan(Typeface.BOLD),
-    start,
-    builder.length,
-    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
-)
+                   StyleSpan(Typeface.BOLD),
+                   start,
+                   builder.length,
+                   Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+                 )
                 builder.append(text).append("\n\n")
             }
             cursor.close()
