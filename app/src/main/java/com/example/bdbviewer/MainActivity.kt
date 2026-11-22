@@ -2,13 +2,13 @@ package com.example.bdbviewer
 
 import android.database.sqlite.SQLiteDatabase
 import android.graphics.Color
+import android.graphics.Typeface
 import android.net.Uri
 import android.os.Bundle
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
 import android.text.style.StyleSpan
-import android.graphics.Typeface
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.widget.*
@@ -34,9 +34,8 @@ class MainActivity : AppCompatActivity() {
     private val bookNumbers = mutableListOf<Int>()
     private val chapterNumbers = mutableListOf<Int>()
 
-    // 성경 66권 표준 이름 매핑 (1 ~ 66)
     private val bibleBookNames = listOf(
-        "", // 0번 인덱스 비움
+        "",
         "창세기", "출애굽기", "레위기", "민수기", "신명기", "여호수아", "사사기", "룻기", "사무엘상", "사무엘하",
         "열왕기상", "열왕기하", "역대상", "역대하", "에스라", "느헤미야", "에스더", "욥기", "시편", "잠언",
         "전도서", "아가", "이사야", "예레미야", "예레미야애가", "에스겔", "다니엘", "호세아", "요엘", "아모스",
@@ -75,7 +74,9 @@ class MainActivity : AppCompatActivity() {
             if (actionId == EditorInfo.IME_ACTION_SEARCH) {
                 performSearch()
                 true
-            } else false
+            } else {
+                false
+            }
         }
 
         findViewById<Button>(R.id.btnPrevChapter).setOnClickListener {
@@ -86,7 +87,6 @@ class MainActivity : AppCompatActivity() {
             moveChapter(1)
         }
 
-        // 앱 재실행 시 이전에 저장된 DB가 있으면 자동으로 열기
         val savedFile = File(filesDir, "saved_bible.db")
         if (savedFile.exists()) {
             openDatabaseFile(savedFile)
@@ -262,3 +262,4 @@ class MainActivity : AppCompatActivity() {
 
                 val bookShortName = if (b in 1 until bibleBookNames.size) bibleBookNames[b] else "${b}권"
                 val ref = "[$bookShortName $c:$v] "
+                val start = builder.length
