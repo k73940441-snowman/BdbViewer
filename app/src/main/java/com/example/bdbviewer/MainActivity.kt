@@ -263,3 +263,32 @@ class MainActivity : AppCompatActivity() {
                 val bookShortName = if (b in 1 until bibleBookNames.size) bibleBookNames[b] else "${b}권"
                 val ref = "[$bookShortName $c:$v] "
                 val start = builder.length
+
+                builder.append(ref)
+                builder.setSpan(
+                    StyleSpan(Typeface.BOLD),
+                    start,
+                    builder.length,
+                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
+                )
+                builder.append(text).append("\n\n")
+            }
+            cursor.close()
+
+            withContext(Dispatchers.Main) {
+                tvStatus.text = "검색 결과: ${count}건" + if (count >= 200) " (최대 200건 표시)" else ""
+                if (count == 0) {
+                    tvBibleContent.text = "'$keyword'에 대한 검색 결과가 없습니다."
+                } else {
+                    tvBibleContent.text = builder
+                    scrollView.scrollTo(0, 0)
+                }
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        db?.close()
+    }
+}
