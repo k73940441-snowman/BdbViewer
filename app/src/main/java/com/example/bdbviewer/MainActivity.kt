@@ -1,5 +1,6 @@
 package com.example.bdbviewer
 
+import android.text.Spannable
 import android.database.sqlite.SQLiteDatabase
 import android.graphics.Color
 import android.graphics.Typeface
@@ -266,11 +267,11 @@ class MainActivity : AppCompatActivity() {
 
                 builder.append(ref)
                 builder.setSpan(
-                    StyleSpan(Typeface.BOLD),
-                    start,
-                    builder.length,
-                    Spannable.SPAN_EXCLUSIVE_EXCLUSIVE
-                )
+    StyleSpan(Typeface.BOLD),
+    start,
+    builder.length,
+    Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
+)
                 builder.append(text).append("\n\n")
             }
             cursor.close()
