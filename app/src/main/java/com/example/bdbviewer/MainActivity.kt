@@ -33,7 +33,6 @@ class MainActivity : AppCompatActivity() {
 
     private var db: SQLiteDatabase? = null
 
-    // DB 모드 구분: BIBLE(.bdb/.cmp), COMMENTARY(.cdb), GENERAL(.hdb/.sdb 등)
     private enum class DbMode { BIBLE, COMMENTARY, GENERAL }
     private var currentMode = DbMode.GENERAL
     private var activeTableName = ""
@@ -172,7 +171,6 @@ class MainActivity : AppCompatActivity() {
 
             val badge = getFileTypeBadge(fileName)
 
-            // 1. 성경 본문(Bible) 테이블이 있는 경우 (.bdb, 일부 .cmp)
             val bibleTable = tables.firstOrNull { it.equals("Bible", ignoreCase = true) }
             if (bibleTable != null) {
                 currentMode = DbMode.BIBLE
@@ -183,7 +181,6 @@ class MainActivity : AppCompatActivity() {
                 return
             }
 
-            // 2. 주석/비교 테이블에 book, chapter 컬럼이 있는 경우 (.cdb, .cmp)
             var verseBasedTable: String? = null
             var detectedTextCol = ""
             for (tbl in tables) {
@@ -196,7 +193,6 @@ class MainActivity : AppCompatActivity() {
 
                 if (cols.contains("book") && cols.contains("chapter")) {
                     verseBasedTable = tbl
-                    // 본문 텍스트가 들어있을 법한 컬럼 자동 탐색
                     detectedTextCol = cols.firstOrNull {
                         it in listOf("ctext", "btext", "text", "content", "comment", "data", "body", "note")
                     } ?: cols.last()
@@ -214,7 +210,6 @@ class MainActivity : AppCompatActivity() {
                 return
             }
 
-            // 3. 찬송가(.hdb), 사전(.sdb) 등 일반 테이블 구조
             currentMode = DbMode.GENERAL
             spinnerChapter.visibility = View.GONE
             loadGeneralTables(tables)
@@ -227,7 +222,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // ================= [모드 1 & 2] 권/장 기반 뷰어 (.bdb, .cdb, .cmp) =================
     private fun getBookDisplayName(bookNum: Int): String {
         return if (bookNum in 1 until bibleBookNames.size) {
             "$bookNum. ${bibleBookNames[bookNum]}"
@@ -261,11 +255,11 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun loadChaptersFromTable(tableName: String, bookNum: Int, textCol: String) {
+        val database = db ?: return
+        chapterNumbers.clear()
+        val displayChapters = mutableListOf<String>()
 
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        db?.close()
-    }
-}
+        val cursor = database.rawQuery(
+            "SELECT DISTINCT chapter FROM \"$tableName\" WHERE book = ? ORDER BY chapter ASC",
+            arrayOf(bookNum.toString())
