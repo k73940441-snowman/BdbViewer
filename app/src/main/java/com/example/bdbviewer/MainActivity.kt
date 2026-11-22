@@ -253,7 +253,33 @@ class MainActivity : AppCompatActivity() {
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
     }
+    private fun loadChaptersFromTable(tableName: String, bookNum: Int, textCol: String) {
+        val database = db ?: return
+        chapterNumbers.clear()
+        val displayChapters = mutableListOf<String>()
 
+        val cursor = database.rawQuery(
+            "SELECT DISTINCT chapter FROM [$tableName] WHERE book = ? ORDER BY chapter ASC",
+            arrayOf(bookNum.toString())
+        )
+        while (cursor.moveToNext()) {
+            val ch = cursor.getInt(0)
+            chapterNumbers.add(ch)
+            displayChapters.add("${ch}장")
+        }
+        cursor.close()
+
+        val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, displayChapters)
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        spinnerChapter.adapter = adapter
+
+        spinnerChapter.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                loadVersesFromTable(tableName, bookNum, chapterNumbers[position], textCol)
+            }
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+    }
        private fun loadVersesFromTable(tableName: String, bookNum: Int, chapterNum: Int, textCol: String) {
         val database = db ?: return
         val cursor = database.rawQuery(
