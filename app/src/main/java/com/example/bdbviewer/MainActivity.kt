@@ -1,5 +1,6 @@
 package com.example.bdbviewer
 
+import android.database.sqlite.SQLiteDatabase
 import android.net.Uri
 import android.os.Bundle
 import android.widget.Button
@@ -7,7 +8,6 @@ import android.widget.TextView
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
-import com.sleepycat.je.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -23,7 +23,7 @@ class MainActivity : AppCompatActivity() {
         ActivityResultContracts.GetContent()
     ) { uri: Uri? ->
         uri?.let {
-            processBdbFile(it)
+            processSqliteBdbFile(it)
         }
     }
 
@@ -40,69 +40,76 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun processBdbFile(uri: Uri) {
-        tvStatus.text = "파일 읽는 중..."
+    private fun processSqliteBdbFile(uri: Uri) {
+        tvStatus.text = "SQLite DB 읽는 중..."
         tvResult.text = ""
 
         lifecycleScope.launch(Dispatchers.IO) {
+            var db: SQLiteDatabase? = null
             try {
-                val dbEnvDir = File(cacheDir, "bdb_temp_env")
-                if (dbEnvDir.exists()) {
-                    dbEnvDir.deleteRecursively()
+                // 1. 선택한 .bdb 파일을 앱 내부 임시 파일로 복사
+                val tempDbFile = File(cacheDir, "temp_bible.db")
+                if (tempDbFile.exists()) {
+                    tempDbFile.delete()
                 }
-                dbEnvDir.mkdirs()
-
-                val targetFile = File(dbEnvDir, "00000000.jdb")
                 contentResolver.openInputStream(uri)?.use { input ->
-                    FileOutputStream(targetFile).use { output ->
+                    FileOutputStream(tempDbFile).use { output ->
                         input.copyTo(output)
                     }
                 }
 
-                val envConfig = EnvironmentConfig().apply {
-                    readOnly = true
-                    allowCreate = false
-                }
-                val env = Environment(dbEnvDir, envConfig)
+                // 2. 안드로이드 기본 SQLite 엔진으로 읽기 전용 오픈
+                db = SQLiteDatabase.openDatabase(
+                    tempDbFile.absolutePath,
+                    null,
+                    SQLiteDatabase.OPEN_READONLY
+                )
 
-                val dbNames = env.databaseNames
                 val sb = StringBuilder()
 
-                if (dbNames.isEmpty()) {
-                    sb.append("데이터베이스가 비어있거나 지원하지 않는 BDB 포맷입니다.\n")
+                // 3. DB 내부의 모든 테이블 목록 조회
+                val tableCursor = db.rawQuery(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'android_%'",
+                    null
+                )
+                val tables = mutableListOf<String>()
+                while (tableCursor.moveToNext()) {
+                    tables.add(tableCursor.getString(0))
+                }
+                tableCursor.close()
+
+                if (tables.isEmpty()) {
+                    sb.append("테이블이 존재하지 않습니다.")
                 } else {
-                    for (dbName in dbNames) {
-                        sb.append("=== DB 이름: $dbName ===\n")
-                        val dbConfig = DatabaseConfig().apply {
-                            readOnly = true
-                            allowCreate = false
-                        }
-                        val db = env.openDatabase(null, dbName, dbConfig)
-                        val cursor = db.openCursor(null, null)
+                    for (tableName in tables) {
+                        sb.append("==============================\n")
+                        sb.append("📂 테이블 이름: $tableName\n")
+                        sb.append("==============================\n\n")
 
-                        val foundKey = DatabaseEntry()
-                        val foundData = DatabaseEntry()
+                        // 각 테이블의 데이터 조회 (최대 500행 미리보기)
+                        val dataCursor = db.rawQuery("SELECT * FROM \"$tableName\" LIMIT 500", null)
+                        val colNames = dataCursor.columnNames
+                        var rowCount = 0
 
-                        var count = 0
-                        while (cursor.getNext(foundKey, foundData, LockMode.DEFAULT) == OperationStatus.SUCCESS) {
-                            val keyStr = String(foundKey.data, Charsets.UTF_8)
-                            val valStr = String(foundData.data, Charsets.UTF_8)
-                            sb.append("[$count] Key: $keyStr -> Value: $valStr\n")
-                            count++
-
-                            if (count >= 500) {
-                                sb.append("... (데이터가 많아 500개까지만 표시합니다) ...\n")
-                                break
+                        while (dataCursor.moveToNext()) {
+                            rowCount++
+                            val rowItems = mutableListOf<String>()
+                            for (i in colNames.indices) {
+                                val value = dataCursor.getString(i) ?: "NULL"
+                                rowItems.add("${colNames[i]}: $value")
                             }
+                            sb.append("[$rowCount] ${rowItems.joinToString(" | ")}\n\n")
                         }
-                        cursor.close()
-                        db.close()
+                        dataCursor.close()
+
+                        if (rowCount >= 500) {
+                            sb.append("... (데이터가 많아 500개까지만 표시합니다) ...\n\n")
+                        }
                     }
                 }
-                env.close()
 
                 withContext(Dispatchers.Main) {
-                    tvStatus.text = "읽기 완료!"
+                    tvStatus.text = "읽기 완료! (테이블 ${tables.size}개 발견)"
                     tvResult.text = sb.toString()
                 }
 
@@ -110,9 +117,10 @@ class MainActivity : AppCompatActivity() {
                 e.printStackTrace()
                 withContext(Dispatchers.Main) {
                     tvStatus.text = "오류 발생"
-                    tvResult.text = "파일을 열 수 없습니다:\n${e.message}\n\n" +
-                            "※ 참고: C/C++ 기반의 구형 Berkeley DB 파일인 경우 Java Edition 라이브러리와 호환되지 않을 수 있습니다."
+                    tvResult.text = "파일을 열 수 없습니다:\n${e.message}"
                 }
+            } finally {
+                db?.close()
             }
         }
     }
