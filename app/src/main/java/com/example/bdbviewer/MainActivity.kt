@@ -464,7 +464,7 @@ class MainActivity : AppCompatActivity() {
                     builder.append("$text\n\n")
                 }
                 cursor.close()
-            } else if (activeTableName.isNotEmpty() && textColumnName.isNotEmpty()) {
+                       } else if (activeTableName.isNotEmpty() && textColumnName.isNotEmpty()) {
                 val colCursor = database.rawQuery("PRAGMA table_info([$activeTableName])", null)
                 val allCols = mutableListOf("").apply { clear() }
                 while (colCursor.moveToNext()) {
@@ -475,3 +475,38 @@ class MainActivity : AppCompatActivity() {
                 val whereClause = allCols.joinToString(" OR ") { "[$it] LIKE '%$safeKeyword%'" }
 
                 val cursor = database.rawQuery(
+                    "SELECT * FROM [$activeTableName] WHERE $whereClause LIMIT 200",
+                    null
+                )
+                val colNames = cursor.columnNames
+                while (cursor.moveToNext()) {
+                    count++
+                    val rowTexts = mutableListOf("").apply { clear() }
+                    for (i in colNames.indices) {
+                        val value = cursor.getString(i) ?: ""
+                        if (value.isNotBlank()) {
+                            rowTexts.add("• ${colNames[i]}: $value")
+                        }
+                    }
+                    builder.append("[$count]\n" + rowTexts.joinToString("\n") + "\n\n────────────────────\n\n")
+                }
+                cursor.close()
+            }
+
+            withContext(Dispatchers.Main) {
+                tvStatus.text = "검색 결과: ${count}건" + if (count >= 200) " (최대 200건 표시)" else ""
+                if (count == 0) {
+                    tvBibleContent.text = "'$keyword'에 대한 검색 결과가 없습니다."
+                } else {
+                    tvBibleContent.text = builder
+                    scrollView.scrollTo(0, 0)
+                }
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        db?.close()
+    }
+}
