@@ -328,7 +328,7 @@ class MainActivity : AppCompatActivity() {
             val verseLabel = if (verseIdx >= 0) {
                 val v1 = cursor.getInt(verseIdx)
                 val v2 = if (toVerseIdx >= 0) cursor.getInt(toVerseIdx) else v1
-                if (v2 > v1) "[$v1-$v2절]\n" else "$v1  "
+                if (v2 > v1) "[$v1-${v2}절]\n" else "$v1  "
             } else {
                 "• "
             }
