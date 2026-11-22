@@ -12,11 +12,14 @@
         android:gravity="center_vertical"
         android:orientation="horizontal">
 
-        <Button
+   <ImageButton
             android:id="@+id/btnSelectFile"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:text=".bdb 불러오기" />
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:background="@android:color/transparent"
+            android:contentDescription=".bdb 불러오기"
+            android:scaleType="fitCenter"
+            android:src="@drawable/btn_icon" />
 
         <TextView
             android:id="@+id/tvStatus"
