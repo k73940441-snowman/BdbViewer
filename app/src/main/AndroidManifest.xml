@@ -3,7 +3,7 @@
     <application
         android:icon="@drawable/btn_icon"
         android:roundIcon="@drawable/btn_icon"
-        android:label="앱 이름" ...>
+        android:label="BDB" ...>
         <!-- 기존 activity 설정 유지 -->
     </application>
 </manifest>
