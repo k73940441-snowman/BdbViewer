@@ -53,8 +53,9 @@ class MainActivity : AppCompatActivity() {
         "베드로전서", "베드로후서", "요한일서", "요한이서", "요한삼서", "유다서", "요한계시록"
     )
 
+    // OpenDocument를 사용해야 .cdb, .cmp, .hdb, .sdb 등 비표준 확장자도 회색 처리 없이 선택 가능
     private val filePickerLauncher = registerForActivityResult(
-        ActivityResultContracts.GetContent()
+        ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         uri?.let { importDbFile(it) }
     }
@@ -70,13 +71,13 @@ class MainActivity : AppCompatActivity() {
         tvBibleContent = findViewById(R.id.tvBibleContent)
         scrollView = findViewById(R.id.scrollView)
 
-        val btnSelectFile = findViewById(R.id.btnSelectFile) as Button
+        val btnSelectFile = findViewById<Button>(R.id.btnSelectFile)
         btnSelectFile.text = "DB 파일 열기"
         btnSelectFile.setOnClickListener {
-            filePickerLauncher.launch("*/*")
+            filePickerLauncher.launch(arrayOf("*/*"))
         }
 
-        (findViewById(R.id.btnSearch) as Button).setOnClickListener {
+        findViewById<Button>(R.id.btnSearch).setOnClickListener {
             performSearch()
         }
 
@@ -89,11 +90,11 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        (findViewById(R.id.btnPrevChapter) as Button).setOnClickListener {
+        findViewById<Button>(R.id.btnPrevChapter).setOnClickListener {
             moveChapter(-1)
         }
 
-        (findViewById(R.id.btnNextChapter) as Button).setOnClickListener {
+        findViewById<Button>(R.id.btnNextChapter).setOnClickListener {
             moveChapter(1)
         }
 
@@ -138,6 +139,23 @@ class MainActivity : AppCompatActivity() {
                     tvStatus.text = "불러오기 실패: ${e.message}"
                 }
             }
+        }
+    }
+
+    private fun inspectFileHeader(file: File): String {
+        return try {
+            val bytes = ByteArray(32)
+            val readLen = file.inputStream().use { it.read(bytes) }
+            if (readLen <= 0) return "빈 파일(0 바이트)"
+            val slice = bytes.copyOf(readLen)
+            val hex = slice.joinToString(" ") { String.format("%02X", it) }
+            val ascii = slice.map { b ->
+                val c = b.toInt() and 0xFF
+                if (c in 32..126) c.toChar() else '.'
+            }.joinToString("")
+            "파일 크기: ${file.length()} bytes\n헤더(ASCII): $ascii\n헤더(HEX): $hex"
+        } catch (e: Exception) {
+            "헤더 읽기 실패: ${e.message}"
         }
     }
 
@@ -216,8 +234,12 @@ class MainActivity : AppCompatActivity() {
             tvStatus.text = "[$badge] $fileName (테이블 ${tables.size}개)"
 
         } catch (e: Exception) {
-            tvStatus.text = "지원하지 않는 파일 형식"
-            tvBibleContent.text = "파일을 열 수 없습니다:\n${e.message}\n\n※ 지원 확장자: .bdb, .cdb, .cmp, .hdb, .sdb (SQLite3 기반)"
+            val headerInfo = inspectFileHeader(file)
+            tvStatus.text = "DB 포맷 불일치 ($fileName)"
+            tvBibleContent.text = "이 파일은 표준 비암호화 SQLite3 형식이 아닙니다.\n\n" +
+                    "[오류 메시지]\n${e.message}\n\n" +
+                    "[파일 내부 진단 정보]\n$headerInfo\n\n" +
+                    "※ 위 '파일 내부 진단 정보'를 복사해서 알려주시면, 해당 파일 전용 해독/열기 기능을 바로 추가해 드릴 수 있습니다."
         }
     }
 
@@ -253,14 +275,15 @@ class MainActivity : AppCompatActivity() {
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
     }
+
     private fun loadChaptersFromTable(tableName: String, bookNum: Int, textCol: String) {
         val database = db ?: return
         chapterNumbers.clear()
-        val displayChapters = mutableListOf<String>()
+        val displayChapters = mutableListOf("").apply { clear() }
 
         val cursor = database.rawQuery(
-            "SELECT DISTINCT chapter FROM [$tableName] WHERE book = ? ORDER BY chapter ASC",
-            arrayOf(bookNum.toString())
+            "SELECT DISTINCT chapter FROM [$tableName] WHERE book = $bookNum ORDER BY chapter ASC",
+            null
         )
         while (cursor.moveToNext()) {
             val ch = cursor.getInt(0)
@@ -280,7 +303,8 @@ class MainActivity : AppCompatActivity() {
             override fun onNothingSelected(parent: AdapterView<*>?) {}
         }
     }
-       private fun loadVersesFromTable(tableName: String, bookNum: Int, chapterNum: Int, textCol: String) {
+
+    private fun loadVersesFromTable(tableName: String, bookNum: Int, chapterNum: Int, textCol: String) {
         val database = db ?: return
         val cursor = database.rawQuery(
             "SELECT * FROM [$tableName] WHERE book = $bookNum AND chapter = $chapterNum",
@@ -451,38 +475,3 @@ class MainActivity : AppCompatActivity() {
                 val whereClause = allCols.joinToString(" OR ") { "[$it] LIKE '%$safeKeyword%'" }
 
                 val cursor = database.rawQuery(
-                    "SELECT * FROM [$activeTableName] WHERE $whereClause LIMIT 200",
-                    null
-                )
-                val colNames = cursor.columnNames
-                while (cursor.moveToNext()) {
-                    count++
-                    val rowTexts = mutableListOf("").apply { clear() }
-                    for (i in colNames.indices) {
-                        val value = cursor.getString(i) ?: ""
-                        if (value.isNotBlank()) {
-                            rowTexts.add("• ${colNames[i]}: $value")
-                        }
-                    }
-                    builder.append("[$count]\n" + rowTexts.joinToString("\n") + "\n\n────────────────────\n\n")
-                }
-                cursor.close()
-            }
-
-            withContext(Dispatchers.Main) {
-                tvStatus.text = "검색 결과: ${count}건" + if (count >= 200) " (최대 200건 표시)" else ""
-                if (count == 0) {
-                    tvBibleContent.text = "'$keyword'에 대한 검색 결과가 없습니다."
-                } else {
-                    tvBibleContent.text = builder
-                    scrollView.scrollTo(0, 0)
-                }
-            }
-        }
-    }
-
-    override fun onDestroy() {
-        super.onDestroy()
-        db?.close()
-    }
-}
