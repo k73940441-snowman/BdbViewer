@@ -38,9 +38,9 @@ class MainActivity : AppCompatActivity() {
     private var activeTableName = ""
     private var textColumnName = ""
 
-    private val bookNumbers = mutableListOf<Int>()
-    private val chapterNumbers = mutableListOf<Int>()
-    private val tableNames = mutableListOf<String>()
+    private val bookNumbers = ArrayList<Int>()
+    private val chapterNumbers = ArrayList<Int>()
+    private val tableNames = ArrayList<String>()
 
     private val bibleBookNames = listOf(
         "",
@@ -159,7 +159,7 @@ class MainActivity : AppCompatActivity() {
             db = SQLiteDatabase.openDatabase(file.absolutePath, null, SQLiteDatabase.OPEN_READONLY)
             val database = db ?: return
 
-            val tables = mutableListOf<String>()
+            val tables = ArrayList<String>()
             val c = database.rawQuery(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'android_%'",
                 null
@@ -184,8 +184,8 @@ class MainActivity : AppCompatActivity() {
             var verseBasedTable: String? = null
             var detectedTextCol = ""
             for (tbl in tables) {
-                val colCursor = database.rawQuery("PRAGMA table_info(\"$tbl\")", null)
-                val cols = mutableListOf<String>()
+                val colCursor = database.rawQuery("PRAGMA table_info([$tbl])", null)
+                val cols = ArrayList<String>()
                 while (colCursor.moveToNext()) {
                     cols.add(colCursor.getString(1).lowercase())
                 }
@@ -217,8 +217,7 @@ class MainActivity : AppCompatActivity() {
 
         } catch (e: Exception) {
             tvStatus.text = "지원하지 않는 파일 형식"
-            tvBibleContent.text = "파일을 열 수 없습니다:\n${e.message}\n\n" +
-                    "※ 지원 확장자: .bdb, .cdb, .cmp, .hdb, .sdb (SQLite3 기반)"
+            tvBibleContent.text = "파일을 열 수 없습니다:\n${e.message}\n\n※ 지원 확장자: .bdb, .cdb, .cmp, .hdb, .sdb (SQLite3 기반)"
         }
     }
 
@@ -233,9 +232,9 @@ class MainActivity : AppCompatActivity() {
     private fun loadBooksFromTable(tableName: String, textCol: String) {
         val database = db ?: return
         bookNumbers.clear()
-        val displayNames = mutableListOf<String>()
+        val displayNames = ArrayList<String>()
 
-        val cursor = database.rawQuery("SELECT DISTINCT book FROM \"$tableName\" ORDER BY book ASC", null)
+        val cursor = database.rawQuery("SELECT DISTINCT book FROM [$tableName] ORDER BY book ASC", null)
         while (cursor.moveToNext()) {
             val bNum = cursor.getInt(0)
             bookNumbers.add(bNum)
@@ -258,13 +257,13 @@ class MainActivity : AppCompatActivity() {
     private fun loadChaptersFromTable(tableName: String, bookNum: Int, textCol: String) {
         val database = db ?: return
         chapterNumbers.clear()
-        val displayChapters = mutableListOf<String>()
+        val displayChapters = ArrayList<String>()
 
         val cursor = database.rawQuery(
-            "SELECT DISTINCT chapter FROM \"$tableName\" WHERE book = ? ORDER BY chapter ASC",
-            arrayOf(bookNum.toString())
-)
-while (cursor.moveToNext()) {
+            "SELECT DISTINCT chapter FROM [$tableName] WHERE book = $bookNum ORDER BY chapter ASC",
+            null
+        )
+        while (cursor.moveToNext()) {
 val ch = cursor.getInt(0)
 chapterNumbers.add(ch)
 displayChapters.add("${ch}장")
@@ -283,8 +282,8 @@ override fun onNothingSelected(parent: AdapterView<>?) {}
 private fun loadVersesFromTable(tableName: String, bookNum: Int, chapterNum: Int, textCol: String) {
 val database = db ?: return
 val cursor = database.rawQuery(
-"SELECT * FROM "$tableName" WHERE book = ? AND chapter = ?",
-arrayOf(bookNum.toString(), chapterNum.toString())
+"SELECT * FROM [$tableName] WHERE book = $bookNum AND chapter = $chapterNum",
+null
 )
 val colNames = cursor.columnNames
 val verseIdx = colNames.indexOfFirst { it.equals("verse", ignoreCase = true) || it.equals("fromverse", ignoreCase = true) }
@@ -298,7 +297,7 @@ while (cursor.moveToNext()) {
 val verseLabel = if (verseIdx >= 0) {
 val v1 = cursor.getInt(verseIdx)
 val v2 = if (toVerseIdx >= 0) cursor.getInt(toVerseIdx) else v1
-if (v2 > v1) "$v1~$v2절  " else "$v1  "
+if (v2 > v1) "$v1-$v2 절  " else "$v1  "
 } else {
 "• "
 }
@@ -313,7 +312,7 @@ cursor.close()
 tvBibleContent.text = builder
 scrollView.scrollTo(0, 0)
 }
-private fun loadGeneralTables(tables: List) {
+private fun loadGeneralTables(tables: ArrayList) {
 tableNames.clear()
 tableNames.addAll(tables)
 val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, tableNames)
@@ -329,13 +328,13 @@ override fun onNothingSelected(parent: AdapterView<>?) {}
 }
 private fun loadGeneralTableData(tableName: String) {
 val database = db ?: return
-val cursor = database.rawQuery("SELECT * FROM "$tableName" LIMIT 300", null)
+val cursor = database.rawQuery("SELECT * FROM [$tableName] LIMIT 300", null)
 val colNames = cursor.columnNames
 if (colNames.isNotEmpty()) {
 textColumnName = colNames.last()
 }
 val builder = SpannableStringBuilder()
-val header = "📂 테이블: $tableName (최대 300개 항목 표시)\n\n"
+val header = "테이블: $tableName (최대 300개 항목 표시)\n\n"
 builder.append(header)
 builder.setSpan(StyleSpan(Typeface.BOLD), 0, header.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
 var idx = 0
@@ -346,7 +345,7 @@ val itemHeader = "[$idx]\n"
 builder.append(itemHeader)
 builder.setSpan(ForegroundColorSpan(Color.parseColor("#2E7D32")), titleStart, titleStart + itemHeader.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
 builder.setSpan(StyleSpan(Typeface.BOLD), titleStart, titleStart + itemHeader.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-val rowTexts = mutableListOf()
+val rowTexts = ArrayList()
 for (i in colNames.indices) {
 val value = cursor.getString(i) ?: ""
 if (value.isNotBlank()) {
@@ -392,11 +391,12 @@ tvStatus.text = "'$keyword' 검색 중..."
 lifecycleScope.launch(Dispatchers.IO) {
 val builder = SpannableStringBuilder()
 var count = 0
+val safeKeyword = keyword.replace("'", "''")
 if (currentMode == DbMode.BIBLE || currentMode == DbMode.COMMENTARY) {
 val targetCol = if (currentMode == DbMode.BIBLE) "btext" else textColumnName
 val cursor = database.rawQuery(
-"SELECT * FROM "$activeTableName" WHERE "$targetCol" LIKE ? ORDER BY book ASC, chapter ASC LIMIT 200",
-arrayOf("%$keyword%")
+"SELECT * FROM [$activeTableName] WHERE [$targetCol] LIKE '%$safeKeyword%' ORDER BY book ASC, chapter ASC LIMIT 200",
+null
 )
 val colNames = cursor.columnNames
 val bookIdx = colNames.indexOfFirst { it.equals("book", ignoreCase = true) }
@@ -419,22 +419,21 @@ builder.append("$text\n\n")
 }
 cursor.close()
 } else if (activeTableName.isNotEmpty() && textColumnName.isNotEmpty()) {
-val colCursor = database.rawQuery("PRAGMA table_info("$activeTableName")", null)
-val allCols = mutableListOf()
+val colCursor = database.rawQuery("PRAGMA table_info([$activeTableName])", null)
+val allCols = ArrayList()
 while (colCursor.moveToNext()) {
 allCols.add(colCursor.getString(1))
 }
 colCursor.close()
-val whereClause = allCols.joinToString(" OR ") { ""$it" LIKE ?" }
-val args = Array(allCols.size) { "%$keyword%" }
+val whereClause = allCols.joinToString(" OR ") { "[$it] LIKE '%$safeKeyword%'" }
 val cursor = database.rawQuery(
-"SELECT * FROM "$activeTableName" WHERE $whereClause LIMIT 200",
-args
+"SELECT * FROM [$activeTableName] WHERE $whereClause LIMIT 200",
+null
 )
 val colNames = cursor.columnNames
 while (cursor.moveToNext()) {
 count++
-val rowTexts = mutableListOf()
+val rowTexts = ArrayList()
 for (i in colNames.indices) {
 val value = cursor.getString(i) ?: ""
 if (value.isNotBlank()) {
