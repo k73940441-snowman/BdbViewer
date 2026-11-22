@@ -4,8 +4,10 @@ import android.database.sqlite.SQLiteDatabase
 import android.graphics.Color
 import android.graphics.Typeface
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
+import android.text.Html
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.style.ForegroundColorSpan
@@ -33,13 +35,14 @@ class MainActivity : AppCompatActivity() {
 
     private var db: SQLiteDatabase? = null
 
-    private enum class DbMode { BIBLE, COMMENTARY, GENERAL }
+    private enum class DbMode { VERSE_BASED, HYMNAL, GENERAL }
     private var currentMode = DbMode.GENERAL
     private var activeTableName = ""
     private var textColumnName = ""
 
     private val bookNumbers = mutableListOf(0).apply { clear() }
     private val chapterNumbers = mutableListOf(0).apply { clear() }
+    private val hymnChapters = mutableListOf(0).apply { clear() }
     private val tableNames = mutableListOf("").apply { clear() }
 
     private val bibleBookNames = listOf(
@@ -53,7 +56,7 @@ class MainActivity : AppCompatActivity() {
         "베드로전서", "베드로후서", "요한일서", "요한이서", "요한삼서", "유다서", "요한계시록"
     )
 
-    // OpenDocument를 사용해야 .cdb, .cmp, .hdb, .sdb 등 비표준 확장자도 회색 처리 없이 선택 가능
+    // 모든 확장자(.bdb, .cdb, .cmp, .hdb, .sdb)를 회색 비활성화 없이 선택할 수 있도록 OpenDocument 사용
     private val filePickerLauncher = registerForActivityResult(
         ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
@@ -142,20 +145,20 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun inspectFileHeader(file: File): String {
-        return try {
-            val bytes = ByteArray(32)
-            val readLen = file.inputStream().use { it.read(bytes) }
-            if (readLen <= 0) return "빈 파일(0 바이트)"
-            val slice = bytes.copyOf(readLen)
-            val hex = slice.joinToString(" ") { String.format("%02X", it) }
-            val ascii = slice.map { b ->
-                val c = b.toInt() and 0xFF
-                if (c in 32..126) c.toChar() else '.'
-            }.joinToString("")
-            "파일 크기: ${file.length()} bytes\n헤더(ASCII): $ascii\n헤더(HEX): $hex"
-        } catch (e: Exception) {
-            "헤더 읽기 실패: ${e.message}"
+    // HTML 태그(<font>, <b>, <br>) 변환 및 스트롱 코드(<WH1234>) 정리 함수
+    private fun formatRichText(raw: String): CharSequence {
+        // 1. <WH1234>, <WG567> 같은 스트롱 번호 태그 제거
+        val cleaned = raw.replace(Regex("<W[HG]\\d+>"), "")
+        // 2. HTML 태그가 포함되어 있으면 스타일을 살려서 변환
+        return if (cleaned.contains("<") && cleaned.contains(">")) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                Html.fromHtml(cleaned, Html.FROM_HTML_MODE_LEGACY)
+            } else {
+                @Suppress("DEPRECATION")
+                Html.fromHtml(cleaned)
+            }
+        } else {
+            cleaned
         }
     }
 
@@ -164,7 +167,7 @@ class MainActivity : AppCompatActivity() {
         return when (ext) {
             "bdb" -> "성경(.bdb)"
             "cdb" -> "주석(.cdb)"
-            "cmp" -> "비교/대조(.cmp)"
+            "cmp" -> "비교(.cmp)"
             "hdb" -> "찬송가(.hdb)"
             "sdb" -> "사전(.sdb)"
             else -> "DB(.$ext)"
@@ -189,16 +192,19 @@ class MainActivity : AppCompatActivity() {
 
             val badge = getFileTypeBadge(fileName)
 
-            val bibleTable = tables.firstOrNull { it.equals("Bible", ignoreCase = true) }
-            if (bibleTable != null) {
-                currentMode = DbMode.BIBLE
-                activeTableName = bibleTable
-                spinnerChapter.visibility = View.VISIBLE
-                loadBooksFromTable(bibleTable, "btext")
+            // 1. 찬송가 테이블(hymnal) 확인 (.hdb)
+            val hymnalTable = tables.firstOrNull { it.equals("hymnal", ignoreCase = true) }
+            if (hymnalTable != null) {
+                currentMode = DbMode.HYMNAL
+                activeTableName = hymnalTable
+                textColumnName = "htext"
+                spinnerChapter.visibility = View.GONE
+                loadHymnalList(hymnalTable)
                 tvStatus.text = "[$badge] $fileName"
                 return
             }
 
+            // 2. 권/장 기반 테이블 확인 (.bdb 성경, .cdb 주석, .cmp 비교)
             var verseBasedTable: String? = null
             var detectedTextCol = ""
             for (tbl in tables) {
@@ -212,14 +218,14 @@ class MainActivity : AppCompatActivity() {
                 if (cols.contains("book") && cols.contains("chapter")) {
                     verseBasedTable = tbl
                     detectedTextCol = cols.firstOrNull {
-                        it in listOf("ctext", "btext", "text", "content", "comment", "data", "body", "note")
+                        it in listOf("btext", "ctext", "text", "content", "comment", "data", "body", "note")
                     } ?: cols.last()
                     break
                 }
             }
 
             if (verseBasedTable != null) {
-                currentMode = DbMode.COMMENTARY
+                currentMode = DbMode.VERSE_BASED
                 activeTableName = verseBasedTable
                 textColumnName = detectedTextCol
                 spinnerChapter.visibility = View.VISIBLE
@@ -228,21 +234,19 @@ class MainActivity : AppCompatActivity() {
                 return
             }
 
+            // 3. 사전(.sdb) 및 일반 테이블 구조
             currentMode = DbMode.GENERAL
             spinnerChapter.visibility = View.GONE
             loadGeneralTables(tables)
             tvStatus.text = "[$badge] $fileName (테이블 ${tables.size}개)"
 
         } catch (e: Exception) {
-            val headerInfo = inspectFileHeader(file)
-            tvStatus.text = "DB 포맷 불일치 ($fileName)"
-            tvBibleContent.text = "이 파일은 표준 비암호화 SQLite3 형식이 아닙니다.\n\n" +
-                    "[오류 메시지]\n${e.message}\n\n" +
-                    "[파일 내부 진단 정보]\n$headerInfo\n\n" +
-                    "※ 위 '파일 내부 진단 정보'를 복사해서 알려주시면, 해당 파일 전용 해독/열기 기능을 바로 추가해 드릴 수 있습니다."
+            tvStatus.text = "열기 오류: $fileName"
+            tvBibleContent.text = "파일을 열 수 없습니다:\n${e.message}"
         }
     }
 
+    // ================= [모드 1] 성경/주석/비교 뷰어 (.bdb, .cdb, .cmp) =================
     private fun getBookDisplayName(bookNum: Int): String {
         return if (bookNum in 1 until bibleBookNames.size) {
             "$bookNum. ${bibleBookNames[bookNum]}"
@@ -307,7 +311,7 @@ class MainActivity : AppCompatActivity() {
     private fun loadVersesFromTable(tableName: String, bookNum: Int, chapterNum: Int, textCol: String) {
         val database = db ?: return
         val cursor = database.rawQuery(
-            "SELECT * FROM [$tableName] WHERE book = $bookNum AND chapter = $chapterNum",
+            "SELECT * FROM [$tableName] WHERE book = $bookNum AND chapter = $chapterNum ORDER BY verse ASC",
             null
         )
         val colNames = cursor.columnNames
@@ -324,19 +328,72 @@ class MainActivity : AppCompatActivity() {
             val verseLabel = if (verseIdx >= 0) {
                 val v1 = cursor.getInt(verseIdx)
                 val v2 = if (toVerseIdx >= 0) cursor.getInt(toVerseIdx) else v1
-                if (v2 > v1) "$v1-$v2 절  " else "$v1  "
+                if (v2 > v1) "[$v1-$v2절]\n" else "$v1  "
             } else {
                 "• "
             }
 
-            val contentText = if (textIdx >= 0) (cursor.getString(textIdx) ?: "") else ""
+            val rawText = if (textIdx >= 0) (cursor.getString(textIdx) ?: "") else ""
+            val formattedText = formatRichText(rawText)
 
             val start = builder.length
             builder.append(verseLabel)
             builder.setSpan(ForegroundColorSpan(Color.parseColor("#1565C0")), start, start + verseLabel.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             builder.setSpan(StyleSpan(Typeface.BOLD), start, start + verseLabel.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
 
-            builder.append("$contentText\n\n")
+            builder.append(formattedText)
+            builder.append("\n\n")
+        }
+        cursor.close()
+
+        tvBibleContent.text = builder
+        scrollView.scrollTo(0, 0)
+    }
+
+    private fun loadHymnalList(tableName: String) {
+        val database = db ?: return
+        hymnChapters.clear()
+        val displayTitles = mutableListOf("").apply { clear() }
+
+        val cursor = database.rawQuery("SELECT chapter, title FROM [$tableName] ORDER BY chapter ASC", null)
+        while (cursor.moveToNext()) {
+            val ch = cursor.getInt(0)
+            val title = cursor.getString(1) ?: ""
+            hymnChapters.add(ch)
+            displayTitles.add("${ch}장. $title")
+        }
+        cursor.close()
+
+        val adapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, displayTitles)
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        spinnerBook.adapter = adapter
+
+        spinnerBook.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                loadHymnDetail(tableName, hymnChapters[position])
+            }
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+    }
+
+    private fun loadHymnDetail(tableName: String, chapterNum: Int) {
+        val database = db ?: return
+        val cursor = database.rawQuery(
+            "SELECT chapter, title, htext FROM [$tableName] WHERE chapter = $chapterNum",
+            null
+        )
+        val builder = SpannableStringBuilder()
+        if (cursor.moveToFirst()) {
+            val ch = cursor.getInt(0)
+            val title = cursor.getString(1) ?: ""
+            val rawHtext = cursor.getString(2) ?: ""
+
+            val header = "🎵 찬송가 ${ch}장 - $title\n\n"
+            builder.append(header)
+            builder.setSpan(ForegroundColorSpan(Color.parseColor("#1565C0")), 0, header.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+            builder.setSpan(StyleSpan(Typeface.BOLD), 0, header.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+
+            builder.append(formatRichText(rawHtext))
         }
         cursor.close()
 
@@ -383,14 +440,15 @@ class MainActivity : AppCompatActivity() {
             builder.setSpan(ForegroundColorSpan(Color.parseColor("#2E7D32")), titleStart, titleStart + itemHeader.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
             builder.setSpan(StyleSpan(Typeface.BOLD), titleStart, titleStart + itemHeader.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
 
-            val rowTexts = mutableListOf("").apply { clear() }
             for (i in colNames.indices) {
                 val value = cursor.getString(i) ?: ""
                 if (value.isNotBlank()) {
-                    rowTexts.add("• ${colNames[i]}: $value")
+                    builder.append("• ${colNames[i]}: ")
+                    builder.append(formatRichText(value))
+                    builder.append("\n")
                 }
             }
-            builder.append(rowTexts.joinToString("\n") + "\n\n────────────────────\n\n")
+            builder.append("\n────────────────────\n\n")
         }
         cursor.close()
 
@@ -399,10 +457,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun moveChapter(delta: Int) {
-        if (currentMode == DbMode.GENERAL) {
-            Toast.makeText(this, "찬송가/사전 모드에서는 상단 메뉴에서 항목을 선택하세요.", Toast.LENGTH_SHORT).show()
+        if (currentMode == DbMode.HYMNAL) {
+            if (hymnChapters.isEmpty()) return
+            val nextIdx = spinnerBook.selectedItemPosition + delta
+            if (nextIdx in hymnChapters.indices) {
+                spinnerBook.setSelection(nextIdx)
+            } else {
+                Toast.makeText(this, "더 이상 이동할 찬송가가 없습니다.", Toast.LENGTH_SHORT).show()
+            }
             return
         }
+
+        if (currentMode == DbMode.GENERAL) {
+            Toast.makeText(this, "사전 모드에서는 상단 검색창으로 단어를 검색하세요.", Toast.LENGTH_SHORT).show()
+            return
+        }
+
         if (chapterNumbers.isEmpty()) return
         val currentChIdx = spinnerChapter.selectedItemPosition
         val nextChIdx = currentChIdx + delta
@@ -436,35 +506,55 @@ class MainActivity : AppCompatActivity() {
             var count = 0
             val safeKeyword = keyword.replace("'", "''")
 
-            if (currentMode == DbMode.BIBLE || currentMode == DbMode.COMMENTARY) {
-                val targetCol = if (currentMode == DbMode.BIBLE) "btext" else textColumnName
+            if (currentMode == DbMode.VERSE_BASED) {
                 val cursor = database.rawQuery(
-                    "SELECT * FROM [$activeTableName] WHERE [$targetCol] LIKE '%$safeKeyword%' ORDER BY book ASC, chapter ASC LIMIT 200",
+                    "SELECT * FROM [$activeTableName] WHERE [$textColumnName] LIKE '%$safeKeyword%' ORDER BY book ASC, chapter ASC LIMIT 200",
                     null
                 )
                 val colNames = cursor.columnNames
                 val bookIdx = colNames.indexOfFirst { it.equals("book", ignoreCase = true) }
                 val chIdx = colNames.indexOfFirst { it.equals("chapter", ignoreCase = true) }
                 val vIdx = colNames.indexOfFirst { it.equals("verse", ignoreCase = true) || it.equals("fromverse", ignoreCase = true) }
-                val txtIdx = colNames.indexOfFirst { it.equals(targetCol, ignoreCase = true) }
+                val txtIdx = colNames.indexOfFirst { it.equals(textColumnName, ignoreCase = true) }
 
                 while (cursor.moveToNext()) {
                     count++
                     val b = if (bookIdx >= 0) cursor.getInt(bookIdx) else 0
                     val c = if (chIdx >= 0) cursor.getInt(chIdx) else 0
                     val v = if (vIdx >= 0) cursor.getInt(vIdx) else 0
-                    val text = if (txtIdx >= 0) (cursor.getString(txtIdx) ?: "") else ""
+                    val rawText = if (txtIdx >= 0) (cursor.getString(txtIdx) ?: "") else ""
 
                     val bookShortName = if (b in 1 until bibleBookNames.size) bibleBookNames[b] else "${b}권"
-                    val ref = if (v > 0) "[$bookShortName $c:$v] " else "[$bookShortName ${c}장] "
+                    val ref = if (v > 0) "[$bookShortName $c:$v]\n" else "[$bookShortName ${c}장]\n"
                     val start = builder.length
                     builder.append(ref)
                     builder.setSpan(ForegroundColorSpan(Color.parseColor("#2E7D32")), start, start + ref.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
                     builder.setSpan(StyleSpan(Typeface.BOLD), start, start + ref.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-                    builder.append("$text\n\n")
+                    builder.append(formatRichText(rawText))
+                    builder.append("\n\n")
                 }
                 cursor.close()
-                       } else if (activeTableName.isNotEmpty() && textColumnName.isNotEmpty()) {
+            } else if (currentMode == DbMode.HYMNAL) {
+                val cursor = database.rawQuery(
+                    "SELECT chapter, title, htext FROM [$activeTableName] WHERE chapter LIKE '%$safeKeyword%' OR title LIKE '%$safeKeyword%' OR htext LIKE '%$safeKeyword%' ORDER BY chapter ASC LIMIT 200",
+                    null
+                )
+                while (cursor.moveToNext()) {
+                    count++
+                    val ch = cursor.getInt(0)
+                    val title = cursor.getString(1) ?: ""
+                    val rawText = cursor.getString(2) ?: ""
+
+                    val ref = "[찬송가 ${ch}장 - $title]\n"
+                    val start = builder.length
+                    builder.append(ref)
+                    builder.setSpan(ForegroundColorSpan(Color.parseColor("#2E7D32")), start, start + ref.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    builder.setSpan(StyleSpan(Typeface.BOLD), start, start + ref.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+                    builder.append(formatRichText(rawText))
+                    builder.append("\n\n────────────────────\n\n")
+                }
+                cursor.close()
+            } else if (activeTableName.isNotEmpty() && textColumnName.isNotEmpty()) {
                 val colCursor = database.rawQuery("PRAGMA table_info([$activeTableName])", null)
                 val allCols = mutableListOf("").apply { clear() }
                 while (colCursor.moveToNext()) {
@@ -481,14 +571,16 @@ class MainActivity : AppCompatActivity() {
                 val colNames = cursor.columnNames
                 while (cursor.moveToNext()) {
                     count++
-                    val rowTexts = mutableListOf("").apply { clear() }
+                    builder.append("[$count]\n")
                     for (i in colNames.indices) {
                         val value = cursor.getString(i) ?: ""
                         if (value.isNotBlank()) {
-                            rowTexts.add("• ${colNames[i]}: $value")
+                            builder.append("• ${colNames[i]}: ")
+                            builder.append(formatRichText(value))
+                            builder.append("\n")
                         }
                     }
-                    builder.append("[$count]\n" + rowTexts.joinToString("\n") + "\n\n────────────────────\n\n")
+                    builder.append("\n────────────────────\n\n")
                 }
                 cursor.close()
             }
